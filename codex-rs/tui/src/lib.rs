@@ -366,6 +366,20 @@ async fn run_ratatui_app(
                 update_action: None,
             });
         }
+        // If login was required but user didn't complete it (e.g., pressed Ctrl+C), exit cleanly
+        if should_show_login_screen(login_status, &initial_config) {
+            let new_login_status = get_login_status(&initial_config);
+            if new_login_status == LoginStatus::NotAuthenticated {
+                restore();
+                session_log::log_session_end();
+                let _ = tui.terminal.clear();
+                return Ok(AppExitInfo {
+                    token_usage: codex_core::protocol::TokenUsage::default(),
+                    conversation_id: None,
+                    update_action: None,
+                });
+            }
+        }
         // if the user acknowledged windows or made an explicit decision ato trust the directory, reload the config accordingly
         if should_show_windows_wsl_screen
             || onboarding_result

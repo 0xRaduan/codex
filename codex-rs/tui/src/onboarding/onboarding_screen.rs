@@ -170,12 +170,6 @@ impl OnboardingScreen {
         out
     }
 
-    fn is_auth_in_progress(&self) -> bool {
-        self.steps.iter().any(|step| {
-            matches!(step, Step::Auth(_)) && matches!(step.get_step_state(), StepState::InProgress)
-        })
-    }
-
     pub(crate) fn is_done(&self) -> bool {
         self.is_done
             || !self
@@ -216,15 +210,8 @@ impl KeyboardHandler for OnboardingScreen {
                 modifiers: crossterm::event::KeyModifiers::CONTROL,
                 kind: KeyEventKind::Press,
                 ..
-            }
-            | KeyEvent {
-                code: KeyCode::Char('q'),
-                kind: KeyEventKind::Press,
-                ..
             } => {
-                if !self.is_auth_in_progress() {
-                    self.is_done = true;
-                }
+                self.is_done = true;
             }
             _ => {
                 if let Some(Step::Welcome(widget)) = self
@@ -443,4 +430,67 @@ pub(crate) async fn run_onboarding_app(
         directory_trust_decision: onboarding_screen.directory_trust_decision(),
         windows_install_selected: onboarding_screen.windows_install_selected(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+
+    fn create_test_onboarding_screen() -> OnboardingScreen {
+        OnboardingScreen {
+            request_frame: FrameRequester::test_dummy(),
+            steps: vec![],
+            is_done: false,
+            windows_install_selected: false,
+        }
+    }
+
+    #[test]
+    fn ctrl_c_sets_is_done() {
+        let mut screen = create_test_onboarding_screen();
+        assert!(!screen.is_done);
+
+        let key_event = KeyEvent {
+            code: KeyCode::Char('c'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::empty(),
+        };
+
+        screen.handle_key_event(key_event);
+        assert!(screen.is_done, "Ctrl+C should set is_done to true");
+    }
+
+    #[test]
+    fn ctrl_d_sets_is_done() {
+        let mut screen = create_test_onboarding_screen();
+        assert!(!screen.is_done);
+
+        let key_event = KeyEvent {
+            code: KeyCode::Char('d'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::empty(),
+        };
+
+        screen.handle_key_event(key_event);
+        assert!(screen.is_done, "Ctrl+D should set is_done to true");
+    }
+
+    #[test]
+    fn other_keys_dont_set_is_done() {
+        let mut screen = create_test_onboarding_screen();
+        assert!(!screen.is_done);
+
+        let key_event = KeyEvent {
+            code: KeyCode::Char('a'),
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::empty(),
+        };
+
+        screen.handle_key_event(key_event);
+        assert!(!screen.is_done, "Regular key 'a' should not set is_done");
+    }
 }
