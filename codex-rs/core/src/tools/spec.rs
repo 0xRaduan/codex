@@ -1834,4 +1834,78 @@ mod tests {
             })
         );
     }
+
+    #[test]
+    fn test_apply_patch_freeform_tool_serialization() {
+        // Test that the freeform apply_patch tool serializes correctly
+        let tool = create_apply_patch_freeform_tool();
+        let json = serde_json::to_value(&tool).expect("serialization should succeed");
+
+        // Verify the structure
+        assert_eq!(json.get("type").and_then(|v| v.as_str()), Some("custom"));
+        assert_eq!(json.get("name").and_then(|v| v.as_str()), Some("apply_patch"));
+        assert!(json.get("description").is_some());
+
+        // Verify the format field exists and has the correct structure
+        let format = json.get("format").expect("format field should exist");
+        assert_eq!(format.get("type").and_then(|v| v.as_str()), Some("grammar"));
+        assert_eq!(format.get("syntax").and_then(|v| v.as_str()), Some("lark"));
+        assert!(format.get("definition").and_then(|v| v.as_str()).is_some());
+
+        // Print the JSON for manual inspection
+        println!("Freeform tool JSON:\n{}", serde_json::to_string_pretty(&json).unwrap());
+    }
+
+    #[test]
+    fn test_apply_patch_json_tool_serialization() {
+        // Test that the JSON apply_patch tool serializes correctly
+        let tool = create_apply_patch_json_tool();
+        let json = serde_json::to_value(&tool).expect("serialization should succeed");
+
+        // Verify the structure
+        assert_eq!(json.get("type").and_then(|v| v.as_str()), Some("function"));
+        assert_eq!(json.get("name").and_then(|v| v.as_str()), Some("apply_patch"));
+        assert!(json.get("description").is_some());
+        assert!(json.get("parameters").is_some());
+        assert_eq!(json.get("strict").and_then(|v| v.as_bool()), Some(false));
+
+        // Print the JSON for manual inspection
+        println!("Function tool JSON:\n{}", serde_json::to_string_pretty(&json).unwrap());
+    }
+
+    #[test]
+    fn test_all_tools_serialization_gpt5_codex() {
+        // Test that all tools for gpt-5-codex serialize correctly
+        let model_family = find_family_for_model("gpt-5-codex")
+            .expect("gpt-5-codex should be a valid model family");
+        let features = Features::with_defaults();
+        let config = ToolsConfig::new(&ToolsConfigParams {
+            model_family: &model_family,
+            features: &features,
+        });
+        let (configured_tools, _) = build_specs(&config, None).build();
+
+        // Convert to ToolSpec slice for serialization
+        let tool_specs: Vec<&ToolSpec> = configured_tools.iter().map(|t| &t.spec).collect();
+
+        // Serialize all tools
+        let tools_json = create_tools_json_for_responses_api(
+            &tool_specs.iter().map(|&s| s.clone()).collect::<Vec<_>>()
+        ).expect("serialization should succeed");
+
+        // Verify each tool has a valid 'type' field
+        for (i, tool_json) in tools_json.iter().enumerate() {
+            let tool_type = tool_json.get("type").and_then(|v| v.as_str());
+            assert!(
+                matches!(tool_type, Some("function") | Some("local_shell") | Some("web_search") | Some("custom")),
+                "Tool at index {} has invalid type: {:?}\nFull tool JSON: {}",
+                i,
+                tool_type,
+                serde_json::to_string_pretty(tool_json).unwrap()
+            );
+        }
+
+        // Print all tools for manual inspection
+        println!("All tools JSON ({} tools):\n{}", tools_json.len(), serde_json::to_string_pretty(&tools_json).unwrap());
+    }
 }

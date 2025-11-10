@@ -200,6 +200,19 @@ impl ModelClient {
 
         let full_instructions = prompt.get_full_instructions(&self.config.model_family);
         let tools_json = create_tools_json_for_responses_api(&prompt.tools)?;
+
+        // Debug logging for tool serialization (especially useful for Windows debugging)
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            match serde_json::to_string_pretty(&tools_json) {
+                Ok(json_str) => {
+                    tracing::debug!("Serialized tools JSON ({} tools):\n{}", tools_json.len(), json_str);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to serialize tools_json for logging: {:?}", e);
+                }
+            }
+        }
+
         let reasoning = create_reasoning_param_for_request(
             &self.config.model_family,
             self.effort,
