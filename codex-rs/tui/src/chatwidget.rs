@@ -1701,6 +1701,7 @@ impl ChatWidget {
             self.rate_limit_snapshot.as_ref(),
             Local::now(),
         ));
+        self.request_redraw();
     }
 
     fn lower_cost_preset(&self) -> Option<ModelPreset> {
@@ -2356,6 +2357,7 @@ impl ChatWidget {
     pub(crate) fn add_mcp_output(&mut self) {
         if self.config.mcp_servers.is_empty() {
             self.add_to_history(history_cell::empty_mcp_output());
+            self.request_redraw();
         } else {
             self.submit_op(Op::ListMcpTools);
         }
