@@ -20,7 +20,7 @@ pub fn get_upgrade_version(config: &Config) -> Option<String> {
         Some(info) => info.last_checked_at < Utc::now() - Duration::hours(20),
     } {
         // Refresh the cached latest version in the background so TUI startup
-        // isn’t blocked by a network call. The UI reads the previously cached
+        // isn't blocked by a network call. The UI reads the previously cached
         // value (if any) for this run; the next run shows the banner if needed.
         tokio::spawn(async move {
             check_for_update(&version_file)
@@ -30,11 +30,25 @@ pub fn get_upgrade_version(config: &Config) -> Option<String> {
     }
 
     info.and_then(|info| {
-        if is_newer(&info.latest_version, CODEX_CLI_VERSION).unwrap_or(false) {
-            Some(info.latest_version)
-        } else {
-            None
+        if !is_newer(&info.latest_version, CODEX_CLI_VERSION).unwrap_or(false) {
+            return None;
         }
+
+        // For Homebrew installations, only show the update if Homebrew has the version available.
+        // If homebrew_version_available is None, we haven't checked yet or it's not a Homebrew
+        // installation, so we allow the update prompt to show (to maintain backward compatibility).
+        #[cfg(any(not(debug_assertions), test))]
+        if get_update_action() == Some(UpdateAction::BrewUpgrade) {
+            match info.homebrew_version_available {
+                Some(true) => Some(info.latest_version),
+                Some(false) => None,
+                None => Some(info.latest_version), // Fall back to showing the update if we haven't checked
+            }
+        } else {
+            Some(info.latest_version)
+        }
+        #[cfg(all(debug_assertions, not(test)))]
+        Some(info.latest_version)
     })
 }
 
@@ -45,6 +59,10 @@ struct VersionInfo {
     last_checked_at: DateTime<Utc>,
     #[serde(default)]
     dismissed_version: Option<String>,
+    /// For Homebrew installations, tracks whether the latest version is available in the cask.
+    /// None means we haven't checked yet or it's not a Homebrew installation.
+    #[serde(default)]
+    homebrew_version_available: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -52,8 +70,14 @@ struct ReleaseInfo {
     tag_name: String,
 }
 
+#[derive(Deserialize, Debug, Clone)]
+struct HomebrewCaskInfo {
+    version: String,
+}
+
 const VERSION_FILENAME: &str = "version.json";
 const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/openai/codex/releases/latest";
+const HOMEBREW_CASK_URL: &str = "https://formulae.brew.sh/api/cask/codex.json";
 
 fn version_filepath(config: &Config) -> PathBuf {
     config.codex_home.join(VERSION_FILENAME)
@@ -62,6 +86,23 @@ fn version_filepath(config: &Config) -> PathBuf {
 fn read_version_info(version_file: &Path) -> anyhow::Result<VersionInfo> {
     let contents = std::fs::read_to_string(version_file)?;
     Ok(serde_json::from_str(&contents)?)
+}
+
+/// Check if a specific version is available in the Homebrew cask.
+/// Returns None if the check fails (network error, parsing error, etc.).
+async fn check_homebrew_version_available(target_version: &str) -> Option<bool> {
+    let result = create_client()
+        .get(HOMEBREW_CASK_URL)
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?
+        .json::<HomebrewCaskInfo>()
+        .await
+        .ok()?;
+
+    Some(result.version == target_version)
 }
 
 async fn check_for_update(version_file: &Path) -> anyhow::Result<()> {
@@ -75,15 +116,28 @@ async fn check_for_update(version_file: &Path) -> anyhow::Result<()> {
         .json::<ReleaseInfo>()
         .await?;
 
+    let latest_version = latest_tag_name
+        .strip_prefix("rust-v")
+        .ok_or_else(|| anyhow::anyhow!("Failed to parse latest tag name '{latest_tag_name}'"))?;
+
+    // For Homebrew installations, check if the version is available in the cask.
+    // We only check this if we're on a Homebrew installation.
+    #[cfg(any(not(debug_assertions), test))]
+    let homebrew_version_available = if get_update_action() == Some(UpdateAction::BrewUpgrade) {
+        check_homebrew_version_available(latest_version).await
+    } else {
+        None
+    };
+    #[cfg(all(debug_assertions, not(test)))]
+    let homebrew_version_available = None;
+
     // Preserve any previously dismissed version if present.
     let prev_info = read_version_info(version_file).ok();
     let info = VersionInfo {
-        latest_version: latest_tag_name
-            .strip_prefix("rust-v")
-            .ok_or_else(|| anyhow::anyhow!("Failed to parse latest tag name '{latest_tag_name}'"))?
-            .into(),
+        latest_version: latest_version.into(),
         last_checked_at: Utc::now(),
         dismissed_version: prev_info.and_then(|p| p.dismissed_version),
+        homebrew_version_available,
     };
 
     let json_line = format!("{}\n", serde_json::to_string(&info)?);
